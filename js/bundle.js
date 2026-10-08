@@ -297,6 +297,7 @@
         }
       }
       this.move(dt, now, obstacles);
+      this.renderOccludedCone(obstacles);
       this.updateVisualMotion();
       this.updateDetectionUi();
       this.updateStateLabel();
@@ -393,6 +394,40 @@
         if (distance(mid, fog) <= fog.radius) return false;
       }
       return true;
+    }
+    /**
+     * Clip the visible cone with analytic ray/AABB intersections.
+     * This replaces 12px marching (hundreds of point/rectangle tests per ray)
+     * without touching the underlying detection or collision rules.
+     */
+    renderOccludedCone(obstacles) {
+      const vertices = [0, 0];
+      const rays = 14;
+      for (let i = 0; i <= rays; i++) {
+        const localAngle = -this.fovRad / 2 + this.fovRad * i / rays;
+        const worldAngle = this.direction + localAngle;
+        const dx = Math.cos(worldAngle);
+        const dy = Math.sin(worldAngle);
+        let nearest = this.visionRange;
+        for (const rect of obstacles) {
+          const left = rect.x - this.x;
+          const right = rect.x + rect.width - this.x;
+          const top = rect.y - this.y;
+          const bottom = rect.y + rect.height - this.y;
+          const tx0 = Math.abs(dx) < 1e-5 ? left <= 0 && right >= 0 ? -Infinity : Infinity : Math.min(left / dx, right / dx);
+          const tx1 = Math.abs(dx) < 1e-5 ? left <= 0 && right >= 0 ? Infinity : -Infinity : Math.max(left / dx, right / dx);
+          const ty0 = Math.abs(dy) < 1e-5 ? top <= 0 && bottom >= 0 ? -Infinity : Infinity : Math.min(top / dy, bottom / dy);
+          const ty1 = Math.abs(dy) < 1e-5 ? top <= 0 && bottom >= 0 ? Infinity : -Infinity : Math.max(top / dy, bottom / dy);
+          const entry = Math.max(tx0, ty0);
+          const exit = Math.min(tx1, ty1);
+          if (entry <= exit && exit >= 0 && entry < nearest) {
+            nearest = Math.max(0, entry);
+          }
+        }
+        vertices.push(Math.cos(localAngle) * nearest, Math.sin(localAngle) * nearest);
+      }
+      this.cone.graphics.clear();
+      this.cone.graphics.drawPoly(0, 0, vertices, PRESETS[this.kind].color);
     }
     playHitFlash() {
       this.body.alpha = 0.25;
@@ -564,7 +599,16 @@
       const facingDegrees = Math.atan2(this.facingY, this.facingX) * 180 / Math.PI;
       this.facingMarker.rotation = facingDegrees;
       this.weaponHand.rotation = facingDegrees;
-      this.drawWeaponHand();
+    }
+    // Aimed clicks make the ranged stapler usable without having to walk toward a target.
+    aimAt(worldX, worldY) {
+      const dir = normalize(worldX - this.x, worldY - this.y);
+      if (dir.x === 0 && dir.y === 0) return;
+      this.facingX = dir.x;
+      this.facingY = dir.y;
+      const degrees = Math.atan2(dir.y, dir.x) * 180 / Math.PI;
+      this.facingMarker.rotation = degrees;
+      this.weaponHand.rotation = degrees;
     }
     canAttack() {
       return !!this.weapon && this.attackCooldown <= 0;
@@ -714,20 +758,13 @@
         return true;
       });
       const weaponPool = eligible.filter((u) => !!u.weapon);
-      const generalPool = eligible.filter((u) => !u.weapon);
+      const stealthPool = eligible.filter((u) => u.category === "stealth");
       const result = [];
-      if (weapon && weaponPool.length > 0) {
-        result.push(this.takeRandom(weaponPool));
-      }
-      while (result.length < 3 && generalPool.length > 0) {
-        result.push(this.takeRandom(generalPool));
-      }
-      while (result.length < 3 && weaponPool.length > 0) {
-        result.push(this.takeRandom(weaponPool));
-      }
-      if (result.length < 3) {
-        const fallback = UPGRADES.filter((u) => !result.some((r) => r.id === u.id));
-        while (result.length < 3 && fallback.length > 0) result.push(this.takeRandom(fallback));
+      if (weapon && weaponPool.length > 0) result.push(this.takeRandom(weaponPool));
+      if (stealthPool.length > 0 && result.length < 3) result.push(this.takeRandom(stealthPool));
+      const remaining = eligible.filter((u) => !result.some((r) => r.id === u.id));
+      while (result.length < 3 && remaining.length > 0) {
+        result.push(this.takeRandom(remaining));
       }
       return this.shuffle(result);
     }
@@ -749,7 +786,7 @@
       bg.alpha = 0.82;
       this.layer.addChild(bg);
       const title = new Laya.Text();
-      title.text = "下班秘籍 · 三选一";
+      title.text = "摸鱼时间 · 下班秘籍三选一";
       title.color = "#ffffff";
       title.fontSize = 34;
       title.bold = true;
@@ -770,7 +807,10 @@
         const x = 175 + i * 330;
         card.pos(x, 230);
         card.graphics.drawRoundRect(0, 0, 270, 250, 16, "#192531");
+        const accent = choice.weapon ? "#79dcff" : choice.category === "stealth" ? "#88e6bc" : choice.category === "combat" ? "#ffa56e" : "#e6cf83";
         card.graphics.drawRoundRect(8, 8, 254, 234, 13, choice.weapon ? "#304252" : "#243544");
+        card.graphics.drawRoundRect(14, 13, 242, 7, 3, accent);
+        card.graphics.drawRoundRect(23, 189, 224, 34, 9, "#334858");
         card.on(Laya.Event.CLICK, this, () => this.choose(i));
         const num = new Laya.Text();
         num.text = `${i + 1}`;
@@ -781,7 +821,7 @@
         card.addChild(num);
         const tag = new Laya.Text();
         tag.text = choice.weapon ? "武器专属" : choice.category === "stealth" ? "潜行" : choice.category === "combat" ? "战斗" : "通用";
-        tag.color = choice.weapon ? "#65d7ff" : "#9fb0bf";
+        tag.color = accent;
         tag.fontSize = 14;
         tag.align = "right";
         tag.width = 100;
@@ -794,7 +834,7 @@
         name.bold = true;
         name.align = "center";
         name.width = 230;
-        name.pos(20, 72);
+        name.pos(20, 64);
         card.addChild(name);
         const desc = new Laya.Text();
         desc.text = choice.desc;
@@ -804,15 +844,15 @@
         desc.align = "center";
         desc.width = 220;
         desc.height = 88;
-        desc.pos(25, 132);
+        desc.pos(25, 118);
         card.addChild(desc);
         const click = new Laya.Text();
-        click.text = "点击选择";
-        click.color = "#7f93a5";
+        click.text = "选它 →";
+        click.color = "#e3f4ff";
         click.fontSize = 14;
         click.align = "center";
         click.width = 220;
-        click.pos(25, 215);
+        click.pos(25, 198);
         card.addChild(click);
         this.layer.addChild(card);
       });
@@ -838,10 +878,14 @@
       s.graphics.drawRoundRect(3, 7, width, height, 7, "#111820");
       s.graphics.drawRoundRect(0, 0, width, height, 7, edge);
       s.graphics.drawRoundRect(5, 4, width - 10, height - 10, 5, top);
+      s.graphics.drawRoundRect(width * 0.6, -13, 40, 16, 6, "#344a59");
+      s.graphics.drawRoundRect(7, height - 7, width - 14, 4, 2, "#8d9da4");
       s.graphics.drawRoundRect(20, 7, 34, 20, 4, "#16222b");
       s.graphics.drawRect(35, 26, 4, 7, "#23333e");
       s.graphics.drawRect(27, 32, 20, 3, "#23333e");
       s.graphics.drawRect(25, 10, 24, 13, variant % 3 === 0 ? "#4bc0ff" : "#8ad66d");
+      s.graphics.drawRect(26, 12, 12, 2, "#c4efff");
+      s.graphics.drawCircle(45, 23, 2, "#80f7c3");
       s.graphics.drawRoundRect(65, 20, 45, 10, 3, "#d4dce2");
       s.graphics.drawRoundRect(width - 30, 8, 14, 17, 5, "#f1c45c");
       s.graphics.drawRect(width - 22, 4, 3, 6, "#dde6ed");
@@ -911,6 +955,35 @@
       s.addChild(key);
       return s;
     }
+    static rewardBeacon() {
+      const s = new Laya.Sprite();
+      s.name = "RewardBeacon";
+      s.graphics.drawEllipse(-37, 19, 74, 24, "#132229");
+      s.graphics.drawCircle(0, 0, 35, "#473366");
+      s.graphics.drawCircle(0, 0, 29, "#8855cb");
+      s.graphics.drawCircle(0, 0, 23, "#33244a");
+      s.graphics.drawPoly(0, 0, [0, -21, 7, -8, 21, 0, 7, 8, 0, 21, -7, 8, -21, 0, -7, -8], "#e9ba68");
+      s.graphics.drawCircle(0, 0, 6, "#ffffff");
+      const name = new Laya.Text();
+      name.text = "下班秘籍";
+      name.color = "#e8ccff";
+      name.fontSize = 14;
+      name.bold = true;
+      name.align = "center";
+      name.width = 110;
+      name.pos(-55, -54);
+      s.addChild(name);
+      const action = new Laya.Text();
+      action.text = "E 领取";
+      action.color = "#fff1b5";
+      action.fontSize = 12;
+      action.bold = true;
+      action.align = "center";
+      action.width = 100;
+      action.pos(-50, 40);
+      s.addChild(action);
+      return s;
+    }
     static weaponPickup(id) {
       const s = new Laya.Sprite();
       const spec = WEAPONS[id];
@@ -952,6 +1025,12 @@
       door.graphics.drawRect(51, 0, 2, 236, "#657681");
       door.graphics.drawLine(8, 12, 8, 224, "#2f3f49", 2);
       door.graphics.drawLine(96, 12, 96, 224, "#2f3f49", 2);
+      door.graphics.drawRect(12, 18, 27, 4, "#334651");
+      door.graphics.drawRect(65, 18, 27, 4, "#334651");
+      door.graphics.drawRect(12, 206, 27, 4, "#334651");
+      door.graphics.drawRect(65, 206, 27, 4, "#334651");
+      door.graphics.drawRoundRect(84, 102, 8, 22, 3, "#657e8d");
+      door.graphics.drawCircle(88, 109, 2.5, "#ffc857");
       const light = new Laya.Sprite();
       light.graphics.drawRoundRect(37, -20, 40, 12, 4, "#1b262e");
       light.graphics.drawCircle(57, -14, 4, active ? "#5bf0a5" : "#6f7b83");
@@ -1220,7 +1299,7 @@
       this.renderToggleState();
     }
     updateJoystick(stageX, stageY) {
-      const cx = 125;
+      const cx = 132;
       const cy = 560;
       let dx = stageX - cx;
       let dy = stageY - cy;
@@ -1390,6 +1469,111 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
   __name(_TutorialSystem, "TutorialSystem");
   var TutorialSystem = _TutorialSystem;
 
+  // src/game/GamePanels.ts
+  var _GamePanels = class _GamePanels {
+    constructor(root) {
+      this.root = root;
+      this.layer = new Laya.Sprite();
+      this.layer.name = "GamePanels";
+      this.layer.zOrder = 2e3;
+      this.layer.size(1280, 720);
+      this.root.addChild(this.layer);
+      this.hide();
+    }
+    hide() {
+      this.layer.visible = false;
+      this.layer.removeChildren();
+    }
+    showHome(onStart, mobile = false) {
+      this.beginPanel("#70f3b5");
+      this.text("下班！下班！", 56, "#f5fcff", true, 0, 163, 1280);
+      this.text("第一关   /   准点下班", 22, "#70f3b5", true, 0, 244, 1280);
+      this.text("17:55 开始行动，18:00 电梯开放。躲开领导视线，或用办公室武器突围。", 19, "#bfd3df", false, 280, 310, 720);
+      this.text("被发现即失败  ·  武器 + 三选一强化  ·  固定关卡多条路线", 17, "#9bafc0", false, 280, 359, 720);
+      this.button("开始下班  →", 490, 417, 300, "#51dba1", "#122b27", onStart);
+      this.text(
+        mobile ? "左侧摇杆移动  ·  右侧攻击 / 互动 / 蹲伏 / 冲刺  ·  顶部暂停" : "WASD 移动   E 互动   空格攻击   Shift 冲刺   C 蹲伏   Esc 暂停",
+        15,
+        "#8ca7ba",
+        false,
+        0,
+        551,
+        1280
+      );
+    }
+    showPause(onResume, onRestart) {
+      this.beginPanel("#79c8ff");
+      this.text("摸鱼时间", 52, "#f4fbff", true, 0, 181, 1280);
+      this.text("游戏已暂停 · 巡逻和倒计时均暂时停止", 21, "#bbd1df", false, 0, 258, 1280);
+      this.button("继续逃离", 365, 359, 255, "#72e8ba", "#18312c", onResume);
+      this.button("重新开局", 661, 359, 255, "#314858", "#e3f3ff", onRestart);
+      this.text("按 Esc / P 也可以继续", 17, "#91aabd", false, 0, 481, 1280);
+    }
+    showEnd(title, detail, stats, victory, onRestart) {
+      const accent = victory ? "#76f4b5" : "#ff8e91";
+      this.beginPanel(accent);
+      this.text(victory ? "打卡成功  /  LEVEL CLEAR" : "下班失败  /  GAME OVER", 16, accent, true, 0, 156, 1280);
+      this.text(title, 46, "#f7fbff", true, 0, 210, 1280);
+      this.text(detail, 22, "#d5e5ec", false, 285, 287, 710, 76);
+      this.text(stats, 17, "#a5beca", false, 295, 366, 690, 61);
+      this.button("再试一次  →", 490, 444, 300, accent, "#162b2c", onRestart);
+      this.text("按 R 可以快速重新开局", 16, "#8eabb9", false, 0, 526, 1280);
+    }
+    beginPanel(accent) {
+      this.layer.removeChildren();
+      this.layer.visible = true;
+      const scrim = new Laya.Sprite();
+      scrim.graphics.drawRect(0, 0, 1280, 720, "#070e16");
+      scrim.alpha = 0.93;
+      this.layer.addChild(scrim);
+      const frame = new Laya.Sprite();
+      frame.graphics.drawRoundRect(237, 111, 806, 500, 28, "#0c1925");
+      frame.graphics.drawRoundRect(246, 120, 788, 482, 23, "#172937");
+      frame.graphics.drawRoundRect(260, 133, 760, 3, 1.5, accent);
+      frame.graphics.drawRoundRect(269, 150, 170, 27, 13, "#294454");
+      frame.graphics.drawCircle(287, 163, 5, accent);
+      frame.graphics.drawCircle(305, 163, 5, "#7ea1b2");
+      frame.graphics.drawCircle(323, 163, 5, "#7ea1b2");
+      frame.graphics.drawRoundRect(285, 574, 710, 1, 0.5, "#385260");
+      this.layer.addChild(frame);
+    }
+    text(value, size, color, bold, x, y, width, height = 55) {
+      const t = new Laya.Text();
+      t.text = value;
+      t.fontSize = size;
+      t.color = color;
+      t.bold = bold;
+      t.align = "center";
+      t.width = width;
+      t.height = height;
+      t.wordWrap = true;
+      t.pos(x, y);
+      this.layer.addChild(t);
+    }
+    button(label, x, y, width, fill, ink, onClick) {
+      const b = new Laya.Sprite();
+      b.name = label;
+      b.graphics.drawRoundRect(0, 5, width, 59, 15, "#0b1922");
+      b.graphics.drawRoundRect(0, 0, width, 58, 15, fill);
+      b.size(width, 64);
+      b.pos(x, y);
+      const t = new Laya.Text();
+      t.text = label;
+      t.fontSize = 23;
+      t.bold = true;
+      t.color = ink;
+      t.align = "center";
+      t.width = width;
+      t.height = 38;
+      t.pos(0, 14);
+      b.addChild(t);
+      b.on(Laya.Event.CLICK, this, onClick);
+      this.layer.addChild(b);
+    }
+  };
+  __name(_GamePanels, "GamePanels");
+  var GamePanels = _GamePanels;
+
   // src/game/LevelOnePrototype.ts
   var _LevelOnePrototype = class _LevelOnePrototype {
     constructor() {
@@ -1404,15 +1588,22 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.fogs = [];
       this.transientFx = [];
       this.interactables = [];
-      this.upgradeZones = [430, 700, 930, 1075];
-      this.usedUpgradeZones = /* @__PURE__ */ new Set();
+      this.rewardStations = [];
+      this.exitTrail = new Laya.Sprite();
+      this.progressBar = new Laya.Sprite();
+      this.exitSign = new Laya.Text();
       this.chosenUpgrades = /* @__PURE__ */ new Set();
       this.sound = new SoundSystem();
+      this.pauseMobileVisible = false;
       this.elapsed = 0;
       this.now = 0;
       this.lastFrame = 0;
-      this.state = "playing";
+      this.state = "menu";
       this.elevatorActive = false;
+      this.elevatorArtActivated = false;
+      this.flashSerial = 0;
+      this.shakeUntil = 0;
+      this.shakePower = 0;
       this.attackFlashUntil = 0;
       this.footstepNoiseCooldown = 0;
       this.firstWeaponUpgradeGranted = false;
@@ -1423,6 +1614,8 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.upgradesTaken = 0;
       this.nearMisses = 0;
       this.maxDetection = 0;
+      this.lastKnockdownAt = -999;
+      this.knockdownCombo = 0;
       this.currentDanger = 0;
       this.lastAlertSfxAt = -999;
       this.firstInteractHintShown = false;
@@ -1450,10 +1643,15 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
           1170,
           this.mobileControls.visible ? this.mobileControls.state : void 0
         );
+        if (this.tryEnterElevator()) {
+          this.cleanupFogs();
+          this.updateFx();
+          return;
+        }
         this.updateTutorial();
         this.updateFootstepNoise(dt);
         this.updatePickups();
-        this.updateUpgradeZones();
+        this.updateRewardStations();
         this.updateEnemies(dt);
         this.updateElevator();
         this.updateInteractables();
@@ -1488,13 +1686,39 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.debugOverlay = new DebugOverlay(this.root);
       this.tutorial = new TutorialSystem(this.root);
       this.refreshControlHint();
-      this.tutorial.show("move", this.mobileControls.visible, this.now, 5.5);
+      this.panels = new GamePanels(this.root);
+      this.panels.showHome(() => this.beginPlaying(), this.mobileControls.visible);
+      this.pauseButton.visible = false;
       Laya.stage.on(Laya.Event.KEY_DOWN, this, this.onKeyDown);
       Laya.stage.on(Laya.Event.KEY_UP, this, this.onKeyUp);
       Laya.stage.on(Laya.Event.MOUSE_DOWN, this, this.onMouseDown);
       this.lastFrame = Laya.timer.currTimer;
       Laya.timer.frameLoop(1, this, this.update);
+    }
+    beginPlaying() {
+      if (this.state !== "menu") return;
+      this.state = "playing";
+      this.panels.hide();
+      this.pauseButton.visible = true;
+      this.lastFrame = Laya.timer.currTimer;
+      this.tutorial.show("move", this.mobileControls.visible, this.now, 5.5);
       this.flashMessage("17:55 · 找武器、看巡逻路线，准备下班", "#8fd5ff", 1500);
+    }
+    togglePause() {
+      if (this.state === "playing" && !this.upgradeSystem.isOpen) {
+        this.state = "paused";
+        this.keys.clear();
+        this.pauseMobileVisible = this.mobileControls.visible;
+        this.mobileControls.setVisible(false);
+        this.pauseButton.visible = false;
+        this.panels.showPause(() => this.togglePause(), () => this.restart());
+      } else if (this.state === "paused") {
+        this.state = "playing";
+        this.panels.hide();
+        this.pauseButton.visible = true;
+        this.mobileControls.setVisible(this.pauseMobileVisible);
+        this.lastFrame = Laya.timer.currTimer;
+      }
     }
     drawOffice() {
       const bg = new Laya.Sprite();
@@ -1509,6 +1733,16 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       floor.graphics.drawRect(860, 82, 190, 596, "#2a3741");
       floor.graphics.drawRect(1105, 82, 135, 596, "#25313a");
       this.world.addChild(floor);
+      this.exitTrail.alpha = 0;
+      this.world.addChild(this.exitTrail);
+      for (let x = 65; x < 1230; x += 78) {
+        floor.graphics.drawLine(x, 83, x, 681, "#30414a", 1);
+      }
+      for (let y = 105; y < 678; y += 70) {
+        floor.graphics.drawLine(40, y, 1240, y, "#30414a", 1);
+      }
+      floor.graphics.drawRoundRect(42, 319, 247, 112, 8, "#293b44");
+      floor.graphics.drawRoundRect(1120, 566, 118, 78, 8, "#1e3740");
       this.addZoneLabel("你的工位", 90, 92);
       this.addZoneLabel("开放办公区", 360, 92);
       this.addZoneLabel("打印 / 茶水区", 655, 92);
@@ -1535,6 +1769,10 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.addPlantDecor(610, 610);
       this.addPlantDecor(875, 132);
       this.addPlantDecor(1090, 610);
+      this.addRewardStation(430, 380);
+      this.addRewardStation(680, 373);
+      this.addRewardStation(930, 363);
+      this.addRewardStation(1136, 626);
       this.interactables.push(
         { id: "printer", name: "制造打印机卡纸", x: 680, y: 186, cooldownUntil: 0, sprite: printer },
         { id: "water", name: "推倒饮水机", x: 705, y: 545, cooldownUntil: 0, sprite: water },
@@ -1572,6 +1810,14 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       eText.width = 140;
       eText.pos(1120, 560);
       this.world.addChild(eText);
+      this.exitSign.text = "● 电梯未开放";
+      this.exitSign.fontSize = 17;
+      this.exitSign.bold = true;
+      this.exitSign.color = "#a3b1ba";
+      this.exitSign.align = "center";
+      this.exitSign.width = 190;
+      this.exitSign.pos(1092, 262);
+      this.world.addChild(this.exitSign);
     }
     spawnPlayer() {
       this.player = new Player(this.world);
@@ -1636,6 +1882,8 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.objectiveLabel.pos(210, 25);
       this.objectiveLabel.width = 520;
       this.ui.addChild(this.objectiveLabel);
+      this.progressBar.pos(210, 62);
+      this.ui.addChild(this.progressBar);
       this.dangerLabel = this.makeText("安全", 18, "#5bf0a5", true);
       this.dangerLabel.align = "center";
       this.dangerLabel.width = 150;
@@ -1643,9 +1891,20 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.ui.addChild(this.dangerLabel);
       this.weaponLabel = this.makeText("武器：无", 18, "#ffc857", true);
       this.weaponLabel.align = "right";
-      this.weaponLabel.width = 300;
-      this.weaponLabel.pos(940, 25);
+      this.weaponLabel.width = 200;
+      this.weaponLabel.pos(930, 25);
       this.ui.addChild(this.weaponLabel);
+      this.pauseButton = new Laya.Sprite();
+      this.pauseButton.name = "PauseButton";
+      this.pauseButton.graphics.drawRoundRect(0, 0, 90, 42, 10, "#314956");
+      this.pauseButton.pos(1152, 13);
+      const pauseText = this.makeText("Ⅱ 暂停", 17, "#e8f7ff", true);
+      pauseText.align = "center";
+      pauseText.width = 90;
+      pauseText.pos(0, 11);
+      this.pauseButton.addChild(pauseText);
+      this.pauseButton.on(Laya.Event.CLICK, this, () => this.togglePause());
+      this.ui.addChild(this.pauseButton);
       const bottomBar = new Laya.Sprite();
       bottomBar.graphics.drawRect(0, 646, DESIGN_WIDTH, 74, "#0b1117");
       bottomBar.alpha = 0.92;
@@ -1659,7 +1918,7 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.movementLabel.pos(1030, 654);
       this.ui.addChild(this.movementLabel);
       this.hintLabel = this.makeText(
-        "WASD/方向键移动 · Shift冲刺（会制造噪音） · C/Ctrl蹲伏 · E互动 · 空格/点击攻击 · T快进18:00 · R重开",
+        "WASD/方向键移动 · Shift冲刺（有噪音） · C/Ctrl蹲伏 · E互动 · 空格/点击攻击 · R重开",
         15,
         "#9fb0bf",
         false
@@ -1675,10 +1934,12 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.dangerOverlay.graphics.drawRect(DESIGN_WIDTH - 16, 0, 16, DESIGN_HEIGHT, "#ff4d5a");
       this.dangerOverlay.alpha = 0;
       this.ui.addChild(this.dangerOverlay);
-      this.statusLabel = this.makeText("", 28, "#ffffff", true);
+      this.statusLabel = this.makeText("", 19, "#ffffff", true);
       this.statusLabel.align = "center";
-      this.statusLabel.width = DESIGN_WIDTH;
-      this.statusLabel.pos(0, 86);
+      this.statusLabel.wordWrap = true;
+      this.statusLabel.width = 385;
+      this.statusLabel.height = 78;
+      this.statusLabel.pos(855, 84);
       this.ui.addChild(this.statusLabel);
     }
     updateClock() {
@@ -1688,6 +1949,9 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         this.tutorial.show("elevator", this.mobileControls.visible, this.now, 5);
         this.flashMessage("18:00！下班！！！电梯已开放", "#5bf0a5", 1600);
       }
+      this.progressBar.graphics.clear();
+      this.progressBar.graphics.drawRoundRect(0, 0, 520, 4, 2, "#32414a");
+      this.progressBar.graphics.drawRoundRect(0, 0, Math.max(1, 520 * Math.min(1, this.elapsed / PREP_SECONDS)), 4, 2, this.elevatorActive ? "#5bf0a5" : "#ffc857");
       if (!this.elevatorActive) {
         const ratio = Math.min(1, this.elapsed / PREP_SECONDS);
         const totalSeconds = Math.floor(ratio * 5 * 60);
@@ -1700,6 +1964,14 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         const second = post % 60;
         this.timeLabel.text = `18:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`;
       }
+    }
+    tryEnterElevator() {
+      if (!this.elevatorActive || this.state !== "playing") return false;
+      const insideElevator = this.player.x >= 1148 && this.player.x <= 1238 && this.player.y >= 320 && this.player.y <= 535;
+      if (!insideElevator) return false;
+      this.tutorial.complete("elevator");
+      this.win();
+      return true;
     }
     updateFootstepNoise(dt) {
       this.footstepNoiseCooldown = Math.max(0, this.footstepNoiseCooldown - dt);
@@ -1770,46 +2042,54 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       }
       const near = this.pickups.find((p) => p.active && distance(p, this.player) < 46);
       const nearProp = this.interactables.find((p) => distance(p, this.player) < 60 && this.now >= p.cooldownUntil);
+      const nearReward = this.rewardStations.find((p) => !p.claimed && distance(p, this.player) < 52);
       if (nearProp && !this.firstInteractHintShown) {
         this.firstInteractHintShown = true;
         this.tutorial.show("interact", this.mobileControls.visible, this.now, 4.6);
       }
       if (near) {
         this.objectiveLabel.text = `E 拾取 ${WEAPONS[near.id].name}`;
+      } else if (nearReward) {
+        this.objectiveLabel.text = this.player.weapon ? "E 领取下班秘籍 · 三选一" : "先找一把武器，再领取这里的秘籍";
       } else if (nearProp) {
         this.objectiveLabel.text = `E ${nearProp.name}`;
       } else if (this.elevatorActive) {
-        this.objectiveLabel.text = "目标：进入电梯，下班！";
+        this.objectiveLabel.text = `→ 电梯已开放！距出口 ${Math.round(distance(this.player, { x: 1188, y: 425 }))} 步`;
       } else {
         this.objectiveLabel.text = "目标：准备下班，18:00 后进入电梯";
       }
     }
-    updateUpgradeZones() {
-      for (const x of this.upgradeZones) {
-        if (this.usedUpgradeZones.has(x)) continue;
-        if (this.player.x >= x) {
-          this.usedUpgradeZones.add(x);
-          this.openUpgrade();
-          break;
-        }
+    updateRewardStations() {
+      for (const station of this.rewardStations) {
+        if (station.claimed) continue;
+        const glow = 0.8 + Math.abs(Math.sin(this.now * 3 + station.x)) * 0.2;
+        station.sprite.alpha = glow;
+        const pulse = 1 + Math.sin(this.now * 3 + station.x) * 0.06;
+        station.sprite.scale(pulse, pulse);
       }
     }
     updateElevator() {
-      this.elevatorGlow.alpha = this.elevatorActive ? 0.86 + Math.abs(Math.sin(this.now * 4)) * 0.12 : 0.36;
-      this.elevatorDoor.alpha = this.elevatorActive ? 0.28 : 1;
-      this.elevatorLight.graphics.clear();
-      this.elevatorLight.graphics.drawRoundRect(37, -20, 40, 12, 4, "#1b262e");
-      this.elevatorLight.graphics.drawCircle(
-        57,
-        -14,
-        this.elevatorActive ? 4 + Math.abs(Math.sin(this.now * 6)) * 1.5 : 4,
-        this.elevatorActive ? "#5bf0a5" : "#6f7b83"
-      );
-      if (this.elevatorActive) {
+      if (this.elevatorActive && !this.elevatorArtActivated) {
+        this.elevatorArtActivated = true;
         this.elevatorGlow.graphics.clear();
         this.elevatorGlow.graphics.drawRoundRect(0, 0, 114, 250, 12, "#4ecf8a");
         this.elevatorGlow.graphics.drawRoundRect(7, 7, 100, 236, 10, "#23483a");
+        this.elevatorLight.graphics.clear();
+        this.elevatorLight.graphics.drawRoundRect(37, -20, 40, 12, 4, "#1b262e");
+        this.elevatorLight.graphics.drawCircle(57, -14, 5, "#5bf0a5");
+        this.exitSign.text = "↓ EXIT · 下班出口";
+        this.exitSign.color = "#70ffb9";
+        this.exitTrail.graphics.clear();
+        this.exitTrail.graphics.drawLine(1115, 620, 1188, 560, "#5bf0a5", 8);
+        this.exitTrail.graphics.drawLine(1188, 560, 1188, 484, "#5bf0a5", 8);
+        for (let i = 0; i < 4; i++) {
+          this.exitTrail.graphics.drawCircle(1188, 552 - i * 24, 8, "#a8ffd6");
+        }
       }
+      this.elevatorGlow.alpha = this.elevatorActive ? 0.86 + Math.abs(Math.sin(this.now * 4)) * 0.12 : 0.36;
+      this.elevatorDoor.alpha = this.elevatorActive ? 0.28 : 1;
+      this.exitTrail.alpha = this.elevatorActive ? 0.23 + 0.1 * Math.abs(Math.sin(this.now * 3)) : 0;
+      this.elevatorLight.alpha = this.elevatorActive ? 0.76 + 0.24 * Math.abs(Math.sin(this.now * 6)) : 1;
     }
     updateInteractables() {
       for (const prop of this.interactables) {
@@ -1822,7 +2102,7 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       const movement = this.player.isCrouching ? "蹲伏 · 低噪音" : this.player.isSprinting ? "冲刺 · 高噪音" : "步行";
       this.movementLabel.text = `行动：${movement}`;
       this.movementLabel.color = this.player.isSprinting ? "#ffc857" : this.player.isCrouching ? "#79c8ff" : "#a9d9bf";
-      this.buildLabel.text = `秘籍 ${this.upgradesTaken} · 击倒 ${this.knockdowns} · 机关 ${this.interactions}`;
+      this.buildLabel.text = `秘籍 ${this.upgradesTaken} · 补给 ${this.rewardStations.filter((s) => s.claimed).length}/4 · 击倒 ${this.knockdowns} · 机关 ${this.interactions}`;
       this.weaponLabel.text = `武器：${this.player.weapon ? WEAPONS[this.player.weapon].name : "无"}`;
       const dangerPulse = 0.35 + Math.abs(Math.sin(this.now * 10)) * 0.65;
       this.dangerOverlay.alpha = this.currentDanger > 0.05 ? Math.min(0.34, this.currentDanger * 0.3 * dangerPulse) : 0;
@@ -1831,26 +2111,30 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       var _a, _b;
       this.sound.unlock();
       const code = ((_a = e.nativeEvent) == null ? void 0 : _a.code) || e.code || "";
+      if (this.state === "menu") {
+        if (code === "Enter" || code === "Space") this.beginPlaying();
+        return;
+      }
+      if (code === "Escape" || code === "KeyP") {
+        this.togglePause();
+        return;
+      }
+      if (code === "KeyR") {
+        this.restart();
+        return;
+      }
+      if (this.state !== "playing") return;
       if ((_b = this.upgradeSystem) == null ? void 0 : _b.handleKey(code)) return;
       this.keys.add(code);
       if (code === "Space") this.attack();
       if (code === "KeyE") this.interact();
-      if (code === "KeyT" && this.state === "playing") {
-        this.elapsed = Math.max(this.elapsed, PREP_SECONDS);
-      }
-      if (code === "KeyM" && this.state === "playing") {
+      if (code === "KeyT") this.elapsed = Math.max(this.elapsed, PREP_SECONDS);
+      if (code === "KeyM") {
         this.mobileControls.toggle();
         this.refreshControlHint();
-        this.flashMessage(
-          this.mobileControls.visible ? "移动端控制已开启" : "移动端控制已关闭",
-          "#79c8ff",
-          700
-        );
+        this.flashMessage(this.mobileControls.visible ? "移动端控制已开启" : "移动端控制已关闭", "#79c8ff", 700);
       }
-      if (code === "F2") {
-        this.debugOverlay.toggle();
-      }
-      if (code === "KeyR") this.restart();
+      if (code === "F2") this.debugOverlay.toggle();
     }
     onKeyUp(e) {
       var _a;
@@ -1859,8 +2143,12 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
     }
     onMouseDown() {
       this.sound.unlock();
-      if (this.mobileControls.visible) return;
-      if (!this.upgradeSystem.isOpen) this.attack();
+      if (this.mobileControls.visible || this.state !== "playing" || this.upgradeSystem.isOpen) return;
+      if (Laya.stage.mouseY < 70 || Laya.stage.mouseY > 646) return;
+      if (this.player.weapon === "stapler") {
+        this.player.aimAt(Laya.stage.mouseX, Laya.stage.mouseY);
+      }
+      this.attack();
     }
     interact() {
       if (this.state !== "playing" || this.upgradeSystem.isOpen) return;
@@ -1882,6 +2170,19 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         }
         return;
       }
+      const station = this.rewardStations.find((p) => !p.claimed && distance(p, this.player) < 52);
+      if (station) {
+        if (!this.player.weapon) {
+          this.flashMessage("先拿武器，再来领取强化", "#ffc857", 1e3);
+          return;
+        }
+        station.claimed = true;
+        station.sprite.visible = false;
+        this.spawnHitBurst(station.x, station.y, "#b98aff", true);
+        this.sound.pickup();
+        this.openUpgrade();
+        return;
+      }
       const prop = this.interactables.find((p) => distance(p, this.player) < 60 && this.now >= p.cooldownUntil);
       if (prop) {
         prop.cooldownUntil = this.now + 6;
@@ -1894,12 +2195,8 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         this.flashMessage(msg, "#ffc857", 1100);
         return;
       }
-      if (distance(this.player, { x: 1188, y: 425 }) < 90) {
-        if (!this.elevatorActive) {
-          this.flashMessage("还没到 18:00，继续准备。", "#ffc857", 900);
-          return;
-        }
-        this.win();
+      if (!this.elevatorActive && distance(this.player, { x: 1188, y: 425 }) < 90) {
+        this.flashMessage("还没到 18:00，继续准备。", "#ffc857", 900);
       }
     }
     attack() {
@@ -1951,8 +2248,11 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.shakeWorld(knocked ? 8 : 4);
       if (knocked) {
         this.knockdowns += 1;
+        this.knockdownCombo = this.now - this.lastKnockdownAt < 4 ? this.knockdownCombo + 1 : 1;
+        this.lastKnockdownAt = this.now;
         this.player.onKnockdown(this.now);
-        this.flashMessage(`击倒 ${enemy.name}！`, "#5bf0a5", 650);
+        this.spawnComboPopup(enemy.x, enemy.y, this.knockdownCombo);
+        this.flashMessage(this.knockdownCombo >= 2 ? `连续击倒 ×${this.knockdownCombo} · ${enemy.name}倒了！` : `击倒 ${enemy.name}！`, this.knockdownCombo >= 2 ? "#ffd479" : "#5bf0a5", 650);
       }
     }
     findAttackTargets(range, ranged) {
@@ -1963,7 +2263,7 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         const forward = d > 0 ? dx / d * this.player.facingX + dy / d * this.player.facingY : 1;
         return { enemy: e, d, forward };
       });
-      return candidates.filter((x) => x.d <= range && x.forward >= (ranged ? 0.87 : 0.3)).sort((a, b) => a.d - b.d).map((x) => x.enemy);
+      return candidates.filter((x) => x.d <= range && x.forward >= (ranged ? 0.87 : 0.3)).filter((x) => !ranged || !segmentBlocked(this.player, x.enemy, this.obstacles)).sort((a, b) => a.d - b.d).map((x) => x.enemy);
     }
     openUpgrade() {
       this.keys.clear();
@@ -1986,6 +2286,7 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.state = "failed";
       this.keys.clear();
       this.mobileControls.setVisible(false);
+      this.pauseButton.visible = false;
       this.tutorial.layer.visible = false;
       this.sound.fail();
       this.showEndOverlay("下班失败", reason, "#ff6464");
@@ -1995,6 +2296,7 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.state = "escaping";
       this.keys.clear();
       this.mobileControls.setVisible(false);
+      this.pauseButton.visible = false;
       this.tutorial.layer.visible = false;
       this.currentDanger = 0;
       this.dangerOverlay.alpha = 0;
@@ -2037,47 +2339,18 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       const minute = Math.floor(post / 60);
       const second = post % 60;
       const rank = post <= 45 ? "下班之神" : post <= 120 ? "职场老油条" : "准时下班";
+      const bossDown = this.enemies.some((e) => e.kind === "boss" && e.knockedOut);
+      const approach = bossDown ? "老板克星" : this.knockdowns >= 4 ? "办公室战神" : this.knockdowns === 0 && this.maxDetection < 0.35 ? "无声下班" : this.interactions >= 2 ? "机关大师" : "自由下班";
       this.showEndOverlay(
         "叮——下班成功！",
-        `18:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")} · ${rank}`,
+        `18:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")} · ${rank} · ${approach}`,
         "#5bf0a5"
       );
     }
     showEndOverlay(titleText, subText, color) {
-      const overlay = new Laya.Sprite();
-      overlay.name = "EndOverlay";
-      overlay.zOrder = 2e3;
-      overlay.graphics.drawRect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT, "#000000");
-      overlay.alpha = 0.92;
-      const title = this.makeText(titleText, 52, color, true);
-      title.align = "center";
-      title.width = DESIGN_WIDTH;
-      title.pos(0, 200);
-      overlay.addChild(title);
-      const sub = this.makeText(subText, 24, "#dde6ee", false);
-      sub.align = "center";
-      sub.wordWrap = true;
-      sub.width = 760;
-      sub.height = 90;
-      sub.pos(260, 280);
-      overlay.addChild(sub);
-      const stats = this.makeText(
-        `击倒 ${this.knockdowns} · 机关 ${this.interactions} · 秘籍 ${this.upgradesTaken} · 最高警觉 ${Math.round(this.maxDetection * 100)}% · 极限脱险 ${this.nearMisses}`,
-        18,
-        "#a8b6c2",
-        false
-      );
-      stats.align = "center";
-      stats.width = DESIGN_WIDTH;
-      stats.pos(0, 385);
-      overlay.addChild(stats);
-      const hint = this.makeText("按 R 或点击屏幕立即重来", 20, "#9fb0bf", false);
-      hint.align = "center";
-      hint.width = DESIGN_WIDTH;
-      hint.pos(0, 450);
-      overlay.addChild(hint);
-      overlay.on(Laya.Event.CLICK, this, () => this.restart());
-      this.root.addChild(overlay);
+      const stats = `击倒 ${this.knockdowns}    机关 ${this.interactions}    秘籍 ${this.upgradesTaken}
+最高警觉 ${Math.round(this.maxDetection * 100)}%    极限脱险 ${this.nearMisses}`;
+      this.panels.showEnd(titleText, subText, stats, color !== "#ff6464", () => this.restart());
     }
     restart() {
       var _a;
@@ -2087,6 +2360,9 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       this.root.destroy(true);
       const next = new _LevelOnePrototype();
       next.start();
+      if (typeof window !== "undefined" && window.__gameQA === this) {
+        window.__gameQA = next;
+      }
     }
     drawAttackFx(range, color, ranged) {
       this.fx.graphics.clear();
@@ -2107,6 +2383,13 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         this.fx.graphics.clear();
         this.attackFlashUntil = 0;
       }
+      const remainingShake = Math.max(0, this.shakeUntil - this.now);
+      const wobble = remainingShake / 0.11 * this.shakePower;
+      const ox = remainingShake > 0 ? Math.sin(this.now * 155) * wobble : 0;
+      const oy = remainingShake > 0 ? Math.cos(this.now * 145) * wobble * 0.55 : 0;
+      this.world.pos(ox, oy);
+      this.fx.pos(ox, oy);
+      if (remainingShake <= 0) this.shakePower = 0;
       for (let i = this.transientFx.length - 1; i >= 0; i--) {
         const item = this.transientFx[i];
         const duration = Math.max(0.01, item.until - item.born);
@@ -2151,6 +2434,18 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
         });
       }
     }
+    spawnComboPopup(x, y, combo) {
+      if (combo < 2) return;
+      const pop = new Laya.Sprite();
+      const txt = this.makeText(`连击 ×${combo}`, Math.min(34, 22 + combo * 2), "#ffe08a", true);
+      txt.width = 160;
+      txt.align = "center";
+      txt.pos(-80, -57);
+      pop.addChild(txt);
+      pop.pos(x, y);
+      this.fx.addChild(pop);
+      this.transientFx.push({ sprite: pop, born: this.now, until: this.now + 0.72, grow: 0.65 });
+    }
     spawnNoiseRing(x, y, color) {
       const ring = new Laya.Sprite();
       ring.graphics.drawCircle(0, 0, 34, color);
@@ -2166,13 +2461,8 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       });
     }
     shakeWorld(power) {
-      this.world.pos(power, -Math.floor(power / 2));
-      this.fx.pos(power, -Math.floor(power / 2));
-      Laya.timer.once(70, this, () => {
-        if (this.state !== "playing") return;
-        this.world.pos(0, 0);
-        this.fx.pos(0, 0);
-      });
+      this.shakePower = Math.min(8, Math.max(this.shakePower, power));
+      this.shakeUntil = this.now + 0.11;
     }
     spawnFog(x, y) {
       const sprite = new Laya.Sprite();
@@ -2193,11 +2483,20 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       }
     }
     flashMessage(text, color = "#ffffff", duration = 900) {
+      const serial = ++this.flashSerial;
       this.statusLabel.text = text;
       this.statusLabel.color = color;
       Laya.timer.once(duration, this, () => {
-        if (this.state === "playing" && !this.upgradeSystem.isOpen) this.statusLabel.text = "";
+        if (serial === this.flashSerial && this.state === "playing" && !this.upgradeSystem.isOpen) {
+          this.statusLabel.text = "";
+        }
       });
+    }
+    addRewardStation(x, y) {
+      const sprite = OfficeArt.rewardBeacon();
+      sprite.pos(x, y);
+      this.world.addChild(sprite);
+      this.rewardStations.push({ x, y, sprite, claimed: false });
     }
     addEnemy(kind, x, y, patrol) {
       this.enemies.push(new Enemy(this.world, kind, x, y, patrol));
@@ -2320,9 +2619,79 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
   __name(_LevelOnePrototype, "LevelOnePrototype");
   var LevelOnePrototype = _LevelOnePrototype;
 
+  // src/game/RoundRectCompat.ts
+  function installRoundRectCompat() {
+    var _a;
+    const graphicsPrototype = (_a = Laya.Graphics) == null ? void 0 : _a.prototype;
+    if (!graphicsPrototype) return;
+    graphicsPrototype.drawRoundRect = function(x, y, width, height, radius, color) {
+      if (width <= 0 || height <= 0) return;
+      const r = Math.max(0, Math.min(radius || 0, width / 2, height / 2));
+      if (r < 0.5) {
+        this.drawRect(x, y, width, height, color);
+        return;
+      }
+      const segments = r < 5 ? 2 : 5;
+      const corners = [
+        [width - r, r, -Math.PI / 2],
+        [width - r, height - r, 0],
+        [r, height - r, Math.PI / 2],
+        [r, r, Math.PI]
+      ];
+      const points = [];
+      for (const [cx, cy, start] of corners) {
+        for (let k = 0; k <= segments; k++) {
+          const angle = start + Math.PI / 2 * k / segments;
+          points.push(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+        }
+      }
+      this.drawPoly(x, y, points, color);
+    };
+  }
+  __name(installRoundRectCompat, "installRoundRectCompat");
+
+  // src/game/OrientationHint.ts
+  function installPortraitOrientationHint() {
+    var _a;
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const touch = "ontouchstart" in window || ((_a = navigator == null ? void 0 : navigator.maxTouchPoints) != null ? _a : 0) > 0;
+    if (!touch) return;
+    const panel = document.createElement("aside");
+    panel.id = "landscape-advice";
+    panel.setAttribute("role", "note");
+    panel.setAttribute("aria-label", "手机屏幕方向提示");
+    panel.style.cssText = [
+      "display:none",
+      "position:fixed",
+      "z-index:90000",
+      "left:8vw",
+      "top:calc(100vw * 0.58 + 20px)",
+      "width:84vw",
+      "box-sizing:border-box",
+      "padding:18px 16px",
+      "color:#d5f7e8",
+      "background:#162c36",
+      "border:1px solid #3c7e75",
+      "border-radius:14px",
+      "font:500 16px/1.6 system-ui,sans-serif",
+      "text-align:center",
+      "box-shadow:0 9px 32px rgba(0,0,0,.25)",
+      "pointer-events:none"
+    ].join(";");
+    panel.textContent = "↻  建议横屏游玩｜横屏时地图、视野和操作按钮会更清楚";
+    document.body.appendChild(panel);
+    const update = /* @__PURE__ */ __name(() => {
+      panel.style.display = window.innerHeight > window.innerWidth ? "block" : "none";
+    }, "update");
+    update();
+    window.addEventListener("resize", update);
+  }
+  __name(installPortraitOrientationHint, "installPortraitOrientationHint");
+
   // src/Entry.ts
   function main() {
     return __async(this, null, function* () {
+      installRoundRectCompat();
       Laya.stage.scaleMode = Laya.Stage.SCALE_FIXED_AUTO || "fixedauto";
       Laya.stage.alignH = Laya.Stage.ALIGN_CENTER || "center";
       Laya.stage.alignV = Laya.Stage.ALIGN_MIDDLE || "middle";
@@ -2331,6 +2700,10 @@ Elapsed: ${s.elapsed.toFixed(1)}s`;
       Laya.stage.height = DESIGN_HEIGHT;
       const game = new LevelOnePrototype();
       game.start();
+      installPortraitOrientationHint();
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("qa") === "1") {
+        window.__gameQA = game;
+      }
     });
   }
   __name(main, "main");
