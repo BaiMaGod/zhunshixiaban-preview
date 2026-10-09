@@ -57,6 +57,11 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund
           npm run typecheck
+          # Visual regression guard: oversized black oval shadows were visible in real Chromium screenshots.
+          if grep -n 'drawEllipse(' src/game/OfficeArt.ts src/game/Player.ts src/game/Enemy.ts; then
+            echo "::error::Raw drawEllipse shadows reintroduced to player/props/enemies."
+            exit 1
+          fi
 
       - name: Install official LayaAir CLI 3.4.0
         shell: bash
