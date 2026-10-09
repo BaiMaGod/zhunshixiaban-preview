@@ -57,6 +57,11 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund
           npm run typecheck
+          # Former prototype attack beam looked like a 10px debug line in real screenshots.
+          if grep -Fq 'this.fx.graphics.drawLine(' src/game/LevelOnePrototype.ts; then
+            echo "::error::Old oversized attack guide beam must not be published."
+            exit 1
+          fi
           # Visual regression guard: oversized black oval shadows were visible in real Chromium screenshots.
           if grep -n 'drawEllipse(' src/game/OfficeArt.ts src/game/Player.ts src/game/Enemy.ts; then
             echo "::error::Raw drawEllipse shadows reintroduced to player/props/enemies."
