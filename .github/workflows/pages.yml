@@ -1,39 +1,166 @@
-name: Deploy GitHub Pages
+name: Build private LayaAir 3.4 and deploy verified Pages
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
+    paths:
+      - '.github/workflows/pages.yml'
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# Never deploy a build unless the complete real-browser suite passed.
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: zhunshixiaban-verified-pages
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build-test-deploy:
+    name: Private checkout → official Laya build → Chromium QA → Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Require narrowly scoped private-source read token
+        env:
+          SOURCE_READ_TOKEN: ${{ secrets.ZHUNSHIXIABAN_SOURCE_READ_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$SOURCE_READ_TOKEN" ]; then
+            echo "::error::Set ZHUNSHIXIABAN_SOURCE_READ_TOKEN in this preview repository's Actions secrets (Contents: Read-only on BaiMaGod/zhunshixiaban)."
+            exit 1
+          fi
+
+      - name: Checkout private game source without persisting token
         uses: actions/checkout@v4
-
-      - name: Configure and enable Pages
-        uses: actions/configure-pages@v5
         with:
-          enablement: true
+          repository: BaiMaGod/zhunshixiaban
+          ref: main
+          token: ${{ secrets.ZHUNSHIXIABAN_SOURCE_READ_TOKEN }}
+          path: private-game
+          persist-credentials: false
 
-      - name: Upload static preview
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: TypeScript source check
+        working-directory: private-game
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm run typecheck
+
+      - name: Install official LayaAir CLI 3.4.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/layabox/layaair-cli/master/install.sh -o "$RUNNER_TEMP/install-layaair.sh"
+          bash "$RUNNER_TEMP/install-layaair.sh"
+          echo "$HOME/.layaair" >> "$GITHUB_PATH"
+          "$HOME/.layaair/layaair" install 3.4.0
+          "$HOME/.layaair/layaair" --version
+
+      - name: Assemble genuine LayaAir 3.4 build project
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_PROJECT="$RUNNER_TEMP/zhunshixiaban-build"
+          ENTRY_UUID="66c57331-1b9f-4bf5-b961-f375d953a7cb"
+          "$HOME/.layaair/layaair" --version=3.4.0 create zhunshixiaban-build -p "$RUNNER_TEMP" -s -t "2D empty project"
+          rm -rf "$BUILD_PROJECT/src/game"
+          mkdir -p "$BUILD_PROJECT/src/game"
+          cp -R "$GITHUB_WORKSPACE/private-game/src/game/." "$BUILD_PROJECT/src/game/"
+          cp "$GITHUB_WORKSPACE/private-game/src/Entry.ts" "$BUILD_PROJECT/src/Entry.ts"
+          cat > "$BUILD_PROJECT/src/Entry.ts.meta" <<EOF
+          {
+            "uuid": "$ENTRY_UUID"
+          }
+          EOF
+          cat > "$BUILD_PROJECT/settings/CompilerSettings.json" <<EOF
+          {
+            "mainScript": "res://$ENTRY_UUID",
+            "keepUnusedComponentScripts": false,
+            "dropDebugger": false,
+            "dropConsole": false,
+            "keepNames": true,
+            "keepUnused": false
+          }
+          EOF
+          cat > "$BUILD_PROJECT/settings/BuildSettings.json" <<'EOF'
+          {
+            "name": "zhunshixiaban"
+          }
+          EOF
+          cat > "$BUILD_PROJECT/settings/PlayerSettings.json" <<'EOF'
+          {
+            "modules": {},
+            "addons": {}
+          }
+          EOF
+
+      - name: Build actual game using official LayaAir CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$HOME/.layaair/layaair" --version=3.4.0 build web -p "$RUNNER_TEMP/zhunshixiaban-build" -o "$GITHUB_WORKSPACE/private-game/dist"
+
+      - name: Validate compiled output before browser testing
+        working-directory: private-game
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          test -f dist/js/bundle.js
+          test "$(wc -c < dist/js/bundle.js)" -gt 30000
+          grep -q "17:55" dist/js/bundle.js
+          touch dist/.nojekyll
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          printf '{"sourceRepository":"BaiMaGod/zhunshixiaban","sourceCommit":"%s","engine":"LayaAir 3.4.0","qa":"Chromium desktop + mobile landscape/portrait touch suite"}\n' "$SOURCE_SHA" > dist/_release.json
+          echo "Compiled source SHA: $SOURCE_SHA"
+          find dist -maxdepth 3 -type f -printf '%P %s bytes\n' | sort | head -80
+
+      - name: Install Chromium QA dependencies
+        working-directory: private-game
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Real desktop and mobile touchscreen browser acceptance
+        working-directory: private-game
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory dist > "$RUNNER_TEMP/zhunshixiaban-http.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID"' EXIT
+          node qa/browser-smoke.mjs
+
+      - name: Retain browser screenshots and acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhunshixiaban-public-runner-browser-qa
+          path: private-game/artifacts/screenshots/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload only tested Web build to Pages
+        if: success()
         uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: private-game/dist
 
-      - name: Deploy
+      - name: Deploy verified build to GitHub Pages
+        if: success()
         id: deployment
         uses: actions/deploy-pages@v4
