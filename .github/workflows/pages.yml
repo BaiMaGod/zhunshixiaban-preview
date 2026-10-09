@@ -218,6 +218,8 @@ jobs:
           npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1
           npx playwright install --with-deps chromium
 
+      # V0.8 second pass: independent limb silhouettes, staged weapon timing,
+      # monitor-glass glow and verified VFX cleanup must pass browser QA.
       # Six-frame front/back locomotion and staged attack art must pass the real Chromium touch/keyboard suite.
       - name: Real desktop and mobile touchscreen browser acceptance
         working-directory: private-game
