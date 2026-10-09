@@ -116,7 +116,7 @@ jobs:
           }
           EOF
 
-      - name: Render 176 illustration, six-cel actor and material textures
+      - name: Render 177 textured props, articulated actor poses and room lighting
         shell: bash
         run: |
           set -euo pipefail
@@ -128,6 +128,7 @@ jobs:
           test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/ui/home.png"
           test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/ui/card.png"
           test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/characters/boss.png"
+          "$RUNNER_TEMP/office-art-venv/bin/python"             "$GITHUB_WORKSPACE/private-game/scripts/validate_motion.py"             "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art"
 
       - name: Build actual game using official LayaAir CLI
         shell: bash
@@ -157,6 +158,7 @@ jobs:
           test -f dist/resources/art/props/elevator_frame.png
           test -s dist/resources/art/environment/office_floor.png
           test -s dist/resources/art/environment/office_lighting.png
+          test -s dist/resources/art/props/screen_glow.png
           test -s dist/resources/art/characters/worker_walk_0.png
           test -s dist/resources/art/characters/worker_walk_5.png
           test -s dist/resources/art/characters/worker_back_3.png
@@ -195,7 +197,7 @@ jobs:
           test -s dist/resources/art/characters/boss_down.png
           test -s dist/resources/art/effects/danger_pulse.png
           echo "Rendered textures: $(find dist/resources/art -name '*.png' | wc -l)"
-          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 176
+          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 177
           test "$(wc -c < dist/js/bundle.js)" -gt 30000
           grep -q "17:55" dist/js/bundle.js
           # Ensure published asset URLs match runtime ArtAssets.loadImage paths.
