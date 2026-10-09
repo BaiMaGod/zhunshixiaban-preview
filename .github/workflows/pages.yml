@@ -106,7 +106,7 @@ jobs:
           }
           EOF
 
-      - name: Generate 21 original UI and character textures
+      - name: Render all 32 UI, office environment and weapon textures
         shell: bash
         run: |
           set -euo pipefail
@@ -145,8 +145,15 @@ jobs:
           test -f dist/resources/art/characters/worker.png
           test -f dist/resources/art/characters/boss.png
           test -f dist/resources/art/props/elevator_frame.png
+          test -s dist/resources/art/environment/office_floor.png
+          test -s dist/resources/art/weapons/folder.png
+          test -s dist/resources/art/weapons/stapler.png
+          test -s dist/resources/art/weapons/keyboard.png
+          test -s dist/resources/art/weapons/extinguisher.png
+          test -s dist/resources/art/upgrade/stealth.png
+          test -s dist/resources/art/upgrade/weapon.png
           echo "Rendered textures: $(find dist/resources/art -name '*.png' | wc -l)"
-          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 21
+          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 32
           test "$(wc -c < dist/js/bundle.js)" -gt 30000
           grep -q "17:55" dist/js/bundle.js
           # Ensure published asset URLs match runtime ArtAssets.loadImage paths.
