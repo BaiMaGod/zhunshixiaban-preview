@@ -106,11 +106,29 @@ jobs:
           }
           EOF
 
+      - name: Generate 21 original UI and character textures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/office-art-venv"
+          "$RUNNER_TEMP/office-art-venv/bin/python" -m pip install --disable-pip-version-check --quiet cairosvg
+          "$RUNNER_TEMP/office-art-venv/bin/python" "$GITHUB_WORKSPACE/private-game/scripts/render_art.py" \
+            "$GITHUB_WORKSPACE/private-game/art/svg" \
+            "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art"
+          test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/ui/home.png"
+          test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/ui/card.png"
+          test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/characters/boss.png"
+
       - name: Build actual game using official LayaAir CLI
         shell: bash
         run: |
           set -euo pipefail
           "$HOME/.layaair/layaair" --version=3.4.0 build web -p "$RUNNER_TEMP/zhunshixiaban-build" -o "$GITHUB_WORKSPACE/private-game/dist"
+          # Explicitly publish dynamically loaded textures. The renderer can't infer runtime string IDs.
+          mkdir -p "$GITHUB_WORKSPACE/private-game/dist/resources/art"
+          cp -R "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/." \
+            "$GITHUB_WORKSPACE/private-game/dist/resources/art/"
+
 
       - name: Validate compiled output before browser testing
         working-directory: private-game
@@ -119,8 +137,22 @@ jobs:
           set -euo pipefail
           test -f dist/index.html
           test -f dist/js/bundle.js
+          test -f dist/resources/art/ui/home.png
+          test -f dist/resources/art/ui/pause.png
+          test -f dist/resources/art/ui/victory.png
+          test -f dist/resources/art/ui/failure.png
+          test -f dist/resources/art/ui/card.png
+          test -f dist/resources/art/characters/worker.png
+          test -f dist/resources/art/characters/boss.png
+          test -f dist/resources/art/props/elevator_frame.png
+          echo "Rendered textures: $(find dist/resources/art -name '*.png' | wc -l)"
+          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 21
           test "$(wc -c < dist/js/bundle.js)" -gt 30000
           grep -q "17:55" dist/js/bundle.js
+          # Ensure published asset URLs match runtime ArtAssets.loadImage paths.
+          test -s dist/resources/art/ui/button.png
+          test -s dist/resources/art/props/desk.png
+          test -s dist/resources/art/props/plant.png
           touch dist/.nojekyll
           SOURCE_SHA="$(git rev-parse HEAD)"
           printf '{"sourceRepository":"BaiMaGod/zhunshixiaban","sourceCommit":"%s","engine":"LayaAir 3.4.0","qa":"Chromium desktop + mobile landscape/portrait touch suite"}\n' "$SOURCE_SHA" > dist/_release.json
