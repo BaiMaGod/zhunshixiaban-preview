@@ -204,6 +204,7 @@ jobs:
           python3 -m http.server 4173 --bind 127.0.0.1 --directory dist > "$RUNNER_TEMP/zhunshixiaban-http.log" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID"' EXIT
+          # Capture crouch / attack / knockout screenshots, and render-bound clipped enemy vision.
           # Includes mobile duplicate-label visibility assertions and physical touch regression.
           node qa/browser-smoke.mjs
 
