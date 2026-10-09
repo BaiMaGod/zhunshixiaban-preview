@@ -128,7 +128,7 @@ jobs:
           test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/ui/home.png"
           test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/ui/card.png"
           test -f "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art/characters/boss.png"
-          "$RUNNER_TEMP/office-art-venv/bin/python"             "$GITHUB_WORKSPACE/private-game/scripts/validate_motion.py"             "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art"
+          "$RUNNER_TEMP/office-art-venv/bin/python" "$GITHUB_WORKSPACE/private-game/scripts/validate_motion.py" "$RUNNER_TEMP/zhunshixiaban-build/assets/resources/art"
 
       - name: Build actual game using official LayaAir CLI
         shell: bash
