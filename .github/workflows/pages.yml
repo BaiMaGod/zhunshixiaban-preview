@@ -184,6 +184,7 @@ jobs:
           npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1
           npx playwright install --with-deps chromium
 
+      # Test assertions check locomotion while keys are still held; desktop, mobile, and pose transitions must all pass.
       - name: Real desktop and mobile touchscreen browser acceptance
         working-directory: private-game
         shell: bash
