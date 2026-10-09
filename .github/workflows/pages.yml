@@ -116,7 +116,7 @@ jobs:
           }
           EOF
 
-      - name: Render all 91 actor poses, mobile UI, hit FX and environment textures
+      - name: Render 176 illustration, six-cel actor and material textures
         shell: bash
         run: |
           set -euo pipefail
@@ -156,6 +156,12 @@ jobs:
           test -f dist/resources/art/characters/boss.png
           test -f dist/resources/art/props/elevator_frame.png
           test -s dist/resources/art/environment/office_floor.png
+          test -s dist/resources/art/environment/office_lighting.png
+          test -s dist/resources/art/characters/worker_walk_0.png
+          test -s dist/resources/art/characters/worker_walk_5.png
+          test -s dist/resources/art/characters/worker_back_3.png
+          test -s dist/resources/art/characters/boss_attack_start.png
+          test -s dist/resources/art/characters/boss_attack_follow.png
           test -s dist/resources/art/weapons/folder.png
           test -s dist/resources/art/weapons/stapler.png
           test -s dist/resources/art/weapons/keyboard.png
@@ -179,7 +185,7 @@ jobs:
           test -s dist/resources/art/characters/boss_down.png
           test -s dist/resources/art/effects/danger_pulse.png
           echo "Rendered textures: $(find dist/resources/art -name '*.png' | wc -l)"
-          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 91
+          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 176
           test "$(wc -c < dist/js/bundle.js)" -gt 30000
           grep -q "17:55" dist/js/bundle.js
           # Ensure published asset URLs match runtime ArtAssets.loadImage paths.
@@ -200,7 +206,7 @@ jobs:
           npm install --no-save --no-package-lock --no-audit --no-fund playwright@1.56.1
           npx playwright install --with-deps chromium
 
-      # Test assertions check locomotion while keys are still held; desktop, mobile, and pose transitions must all pass.
+      # Six-frame front/back locomotion and staged attack art must pass the real Chromium touch/keyboard suite.
       - name: Real desktop and mobile touchscreen browser acceptance
         working-directory: private-game
         shell: bash
