@@ -111,7 +111,7 @@ jobs:
           }
           EOF
 
-      - name: Render all 66 touch UI, poses, FX and scene textures
+      - name: Render all 91 actor poses, mobile UI, hit FX and environment textures
         shell: bash
         run: |
           set -euo pipefail
@@ -168,8 +168,13 @@ jobs:
           test -s dist/resources/art/ui/mobile_interact.png
           test -s dist/resources/art/ui/mobile_crouch.png
           test -s dist/resources/art/ui/mobile_sprint.png
+          test -s dist/resources/art/characters/worker_attack.png
+          test -s dist/resources/art/characters/worker_crouch.png
+          test -s dist/resources/art/characters/boss_hit.png
+          test -s dist/resources/art/characters/boss_down.png
+          test -s dist/resources/art/effects/danger_pulse.png
           echo "Rendered textures: $(find dist/resources/art -name '*.png' | wc -l)"
-          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 66
+          test "$(find dist/resources/art -name '*.png' | wc -l)" -eq 91
           test "$(wc -c < dist/js/bundle.js)" -gt 30000
           grep -q "17:55" dist/js/bundle.js
           # Ensure published asset URLs match runtime ArtAssets.loadImage paths.
