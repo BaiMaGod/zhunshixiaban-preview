@@ -162,6 +162,16 @@ jobs:
           test -s dist/resources/art/characters/worker_back_3.png
           test -s dist/resources/art/characters/boss_attack_start.png
           test -s dist/resources/art/characters/boss_attack_follow.png
+          for actor in worker coworker hr manager supervisor boss; do
+            for direction in walk back; do
+              for frame in 0 1 2 3 4 5; do
+                test -s "dist/resources/art/characters/${actor}_${direction}_${frame}.png"
+              done
+            done
+            for pose in attack_start attack_follow; do
+              test -s "dist/resources/art/characters/${actor}_${pose}.png"
+            done
+          done
           test -s dist/resources/art/weapons/folder.png
           test -s dist/resources/art/weapons/stapler.png
           test -s dist/resources/art/weapons/keyboard.png
